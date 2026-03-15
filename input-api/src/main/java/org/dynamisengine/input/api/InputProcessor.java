@@ -1,6 +1,6 @@
 package org.dynamisengine.input.api;
 
-import org.dynamis.window.api.InputEvent;
+import org.dynamisengine.window.api.InputEvent;
 import org.dynamisengine.input.api.frame.InputFrame;
 
 public interface InputProcessor {

@@ -19,7 +19,7 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.dynamis</groupId>
+      <groupId>org.dynamisengine.window</groupId>
       <artifactId>window-test</artifactId>
     </dependency>
     <dependency>

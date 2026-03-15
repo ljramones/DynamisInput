@@ -2,10 +2,10 @@ package org.dynamisengine.input.test;
 
 import java.util.Objects;
 import java.util.function.Consumer;
-import org.dynamis.window.api.Window;
-import org.dynamis.window.api.WindowConfig;
-import org.dynamis.window.test.FakeWindow;
-import org.dynamis.window.test.FakeWindowSystem;
+import org.dynamisengine.window.api.Window;
+import org.dynamisengine.window.api.WindowConfig;
+import org.dynamisengine.window.test.FakeWindow;
+import org.dynamisengine.window.test.FakeWindowSystem;
 import org.dynamisengine.input.api.frame.InputFrame;
 import org.dynamisengine.input.runtime.InputRuntime;
 

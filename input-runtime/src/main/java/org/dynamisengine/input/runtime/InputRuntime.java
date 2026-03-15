@@ -5,7 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import org.dynamis.window.api.InputEvent;
+import org.dynamisengine.window.api.InputEvent;
 import org.dynamisengine.input.api.ContextId;
 import org.dynamisengine.input.api.InputProcessor;
 import org.dynamisengine.input.api.context.InputMap;

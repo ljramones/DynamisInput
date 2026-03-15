@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 import java.util.Map;
-import org.dynamis.window.api.InputEvent;
-import org.dynamis.window.api.InputEvent.InputAction;
+import org.dynamisengine.window.api.InputEvent;
+import org.dynamisengine.window.api.InputEvent.InputAction;
 import org.dynamisengine.input.api.ActionId;
 import org.dynamisengine.input.api.ContextId;
 import org.dynamisengine.input.api.bind.KeyBinding;
