@@ -25,6 +25,6 @@
 
 ## Conventions
 - Java style: 4-space indentation, no tabs.
-- Package names: lowercase (`org.dynamisinput...`).
+- Package names: lowercase (`org.dynamisengine.input...`).
 - Type names: `PascalCase`; methods/fields: `camelCase`.
 - Commits should stay phase-scoped and keep tests green before each commit.
