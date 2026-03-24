@@ -16,7 +16,12 @@ import org.dynamisengine.input.api.ActionId;
 import org.dynamisengine.input.api.AxisId;
 import org.dynamisengine.input.api.ContextId;
 import org.dynamisengine.input.api.InputProcessor;
+import org.dynamisengine.input.api.bind.AnalogShaping;
 import org.dynamisengine.input.api.bind.AxisComposite2D;
+import org.dynamisengine.input.api.bind.DeadzoneMode;
+import org.dynamisengine.input.api.bind.GamepadAxisBinding;
+import org.dynamisengine.input.api.bind.GamepadButtonBinding;
+import org.dynamisengine.input.api.bind.GamepadStickBinding;
 import org.dynamisengine.input.api.bind.InputBinding;
 import org.dynamisengine.input.api.bind.KeyBinding;
 import org.dynamisengine.input.api.bind.MouseButtonBinding;
@@ -25,16 +30,33 @@ import org.dynamisengine.input.api.context.InputMap;
 import org.dynamisengine.input.api.frame.InputFrame;
 import org.dynamisengine.input.api.frame.InputFrame.ActionState;
 
+/**
+ * Deterministic event-to-frame processor.
+ *
+ * Consumes raw {@link InputEvent}s from DynamisWindow, resolves them through
+ * the context stack and binding configuration, and produces immutable
+ * {@link InputFrame} snapshots at tick boundaries.
+ *
+ * Supports keyboard, mouse, and gamepad inputs with full analog shaping
+ * (deadzones, response curves, sensitivity, inversion).
+ */
 public final class DefaultInputProcessor implements InputProcessor {
     private final Map<ContextId, InputMap> mapsByContext;
     private final Deque<ContextId> contextStack = new ArrayDeque<>();
     private final Map<Long, List<InputEvent>> eventsByTick = new HashMap<>();
     private final Map<Long, InputFrame> frameCache = new HashMap<>();
 
+    // Keyboard state
     private final Set<Integer> downKeys = new HashSet<>();
-    private final Set<Integer> downMouseButtons = new HashSet<>();
     private final Map<Integer, Integer> keyModifiersByCode = new HashMap<>();
+
+    // Mouse state
+    private final Set<Integer> downMouseButtons = new HashSet<>();
     private final Map<Integer, Integer> mouseModifiersByButton = new HashMap<>();
+
+    // Gamepad state — keyed by (gamepadId << 16 | button/axis)
+    private final Set<Long> downGamepadButtons = new HashSet<>();
+    private final Map<Long, Float> gamepadAxisValues = new HashMap<>();
 
     private long lastComputedTick = Long.MIN_VALUE;
 
@@ -87,6 +109,8 @@ public final class DefaultInputProcessor implements InputProcessor {
         var releasedKeys = new HashSet<Integer>();
         var pressedButtons = new HashSet<Integer>();
         var releasedButtons = new HashSet<Integer>();
+        var pressedGamepadButtons = new HashSet<Long>();
+        var releasedGamepadButtons = new HashSet<Long>();
 
         float mouseDeltaX = 0.0f;
         float mouseDeltaY = 0.0f;
@@ -133,7 +157,22 @@ public final class DefaultInputProcessor implements InputProcessor {
                 previousX = cursorMoved.x();
                 previousY = cursorMoved.y();
                 hasCursorPosition = true;
+            } else if (event instanceof InputEvent.GamepadButton gpButton) {
+                long key = gamepadButtonKey(gpButton.gamepadId(), gpButton.button());
+                if (gpButton.action() == InputAction.PRESS) {
+                    if (downGamepadButtons.add(key)) {
+                        pressedGamepadButtons.add(key);
+                    }
+                } else if (gpButton.action() == InputAction.RELEASE) {
+                    if (downGamepadButtons.remove(key)) {
+                        releasedGamepadButtons.add(key);
+                    }
+                }
+            } else if (event instanceof InputEvent.GamepadAxis gpAxis) {
+                long key = gamepadAxisKey(gpAxis.gamepadId(), gpAxis.axis());
+                gamepadAxisValues.put(key, gpAxis.value());
             }
+            // GamepadConnected/Disconnected: no state change needed for frame resolution
         }
 
         Map<ActionId, ActionState> actions = new LinkedHashMap<>();
@@ -141,10 +180,9 @@ public final class DefaultInputProcessor implements InputProcessor {
 
         for (ContextId contextId : contextStack.reversed()) {
             InputMap map = mapsByContext.get(contextId);
-            if (map == null) {
-                continue;
-            }
+            if (map == null) continue;
 
+            // Resolve action bindings
             for (Map.Entry<ActionId, List<InputBinding>> entry : map.actionBindings().entrySet()) {
                 ActionId actionId = entry.getKey();
                 boolean pressed = false;
@@ -166,6 +204,10 @@ public final class DefaultInputProcessor implements InputProcessor {
                         pressed |= pressedButtons.contains(mouseButtonBinding.button()) && modifierMatches;
                         released |= releasedButtons.contains(mouseButtonBinding.button());
                         down |= downMouseButtons.contains(mouseButtonBinding.button()) && modifierMatches;
+                    } else if (binding instanceof GamepadButtonBinding gpBinding) {
+                        pressed |= isGamepadButtonMatched(gpBinding, pressedGamepadButtons);
+                        released |= isGamepadButtonMatched(gpBinding, releasedGamepadButtons);
+                        down |= isGamepadButtonDown(gpBinding);
                     }
                 }
 
@@ -180,6 +222,7 @@ public final class DefaultInputProcessor implements InputProcessor {
                 }
             }
 
+            // Resolve axis bindings
             for (Map.Entry<AxisId, List<InputBinding>> entry : map.axisBindings().entrySet()) {
                 AxisId axisId = entry.getKey();
                 float value = 0.0f;
@@ -189,15 +232,37 @@ public final class DefaultInputProcessor implements InputProcessor {
                 axes.merge(axisId, value, Float::sum);
             }
 
-            if (map.consuming()) {
-                break;
-            }
+            if (map.consuming()) break;
         }
 
         return new InputFrame(tick, actions, axes, List.of());
     }
 
-    private float resolveAxisContribution(InputBinding binding, AxisId axisId, float mouseDeltaX, float mouseDeltaY) {
+    // -- Gamepad helpers ------------------------------------------------------
+
+    private boolean isGamepadButtonMatched(GamepadButtonBinding binding, Set<Long> buttonSet) {
+        if (binding.gamepadId() == -1) {
+            // Match any gamepad
+            for (long key : buttonSet) {
+                if ((key & 0xFFFF) == binding.button()) return true;
+            }
+            return false;
+        }
+        return buttonSet.contains(gamepadButtonKey(binding.gamepadId(), binding.button()));
+    }
+
+    private boolean isGamepadButtonDown(GamepadButtonBinding binding) {
+        if (binding.gamepadId() == -1) {
+            for (long key : downGamepadButtons) {
+                if ((key & 0xFFFF) == binding.button()) return true;
+            }
+            return false;
+        }
+        return downGamepadButtons.contains(gamepadButtonKey(binding.gamepadId(), binding.button()));
+    }
+
+    private float resolveAxisContribution(InputBinding binding, AxisId axisId,
+                                           float mouseDeltaX, float mouseDeltaY) {
         if (binding instanceof KeyBinding keyBinding) {
             return downKeys.contains(keyBinding.keyCode()) && modifiersMatch(
                     keyModifiersByCode.getOrDefault(keyBinding.keyCode(), 0),
@@ -209,7 +274,8 @@ public final class DefaultInputProcessor implements InputProcessor {
                     mouseButtonBinding.requiredModifiers()) ? 1.0f : 0.0f;
         }
         if (binding instanceof MouseDeltaBinding mouseDeltaBinding) {
-            float delta = mouseDeltaBinding.component() == MouseDeltaBinding.Component.X ? mouseDeltaX : mouseDeltaY;
+            float delta = mouseDeltaBinding.component() == MouseDeltaBinding.Component.X
+                    ? mouseDeltaX : mouseDeltaY;
             return delta * mouseDeltaBinding.sensitivity();
         }
         if (binding instanceof AxisComposite2D composite2D) {
@@ -224,7 +290,47 @@ public final class DefaultInputProcessor implements InputProcessor {
                 return (positive - negative) * composite2D.sensitivity();
             }
         }
+        if (binding instanceof GamepadAxisBinding gpAxis) {
+            float raw = getGamepadAxisValue(gpAxis.gamepadId(), gpAxis.axis());
+            return gpAxis.shaping().shape(raw);
+        }
+        if (binding instanceof GamepadStickBinding stick) {
+            float rawX = getGamepadAxisValue(stick.gamepadId(), stick.stickXAxis());
+            float rawY = getGamepadAxisValue(stick.gamepadId(), stick.stickYAxis());
+
+            if (stick.deadzoneMode() == DeadzoneMode.RADIAL) {
+                float[] shaped = stick.shaping().shapeRadial(rawX, rawY);
+                if (axisId.equals(stick.xAxis())) return shaped[0];
+                if (axisId.equals(stick.yAxis())) return shaped[1];
+            } else {
+                // Axial: shape each axis independently
+                if (axisId.equals(stick.xAxis())) return stick.shaping().shape(rawX);
+                if (axisId.equals(stick.yAxis())) return stick.shaping().shape(rawY);
+            }
+        }
         return 0.0f;
+    }
+
+    private float getGamepadAxisValue(int gamepadId, int axis) {
+        if (gamepadId == -1) {
+            // Any gamepad — find first non-zero value
+            for (var entry : gamepadAxisValues.entrySet()) {
+                if ((entry.getKey() & 0xFFFF) == axis) {
+                    float val = entry.getValue();
+                    if (val != 0.0f) return val;
+                }
+            }
+            return 0.0f;
+        }
+        return gamepadAxisValues.getOrDefault(gamepadAxisKey(gamepadId, axis), 0.0f);
+    }
+
+    private static long gamepadButtonKey(int gamepadId, int button) {
+        return ((long) gamepadId << 16) | (button & 0xFFFF);
+    }
+
+    private static long gamepadAxisKey(int gamepadId, int axis) {
+        return ((long) gamepadId << 16) | (axis & 0xFFFF);
     }
 
     private static boolean modifiersMatch(int actual, int required) {

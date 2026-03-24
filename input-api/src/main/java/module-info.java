@@ -4,5 +4,7 @@ module org.dynamisengine.input.api {
     exports org.dynamisengine.input.api;
     exports org.dynamisengine.input.api.bind;
     exports org.dynamisengine.input.api.context;
+    exports org.dynamisengine.input.api.device;
     exports org.dynamisengine.input.api.frame;
+    exports org.dynamisengine.input.api.gesture;
 }
