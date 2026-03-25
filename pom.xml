@@ -13,6 +13,7 @@
     <module>input-core</module>
     <module>input-runtime</module>
     <module>input-test</module>
+    <module>input-window-adapter</module>
   </modules>
 
   <properties>
